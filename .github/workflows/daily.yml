@@ -50,7 +50,10 @@ jobs:
         env:
           WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-          WB_ENDPOINT: https://copilot.tencent.com
+          # 通过仓库 Variables 可热切换接口域名；缺省用 codebuddy.cn（token 的签发域）。
+          # 你的 accessToken 由 https://www.codebuddy.cn/auth/realms/copilot 签发，
+          # 因此默认端点必须用 codebuddy.cn，copilot.tencent.com 会拒签（401）。
+          WB_ENDPOINT: ${{ vars.WB_ENDPOINT || 'https://www.codebuddy.cn' }}
           WB_RESULT_FILE: ${{ runner.temp }}/wb_result.json
           # 强制 Python 以 UTF-8 处理标准流，避免 runner（locale 可能为 C）打印中文时抛 UnicodeEncodeError
           PYTHONIOENCODING: utf-8
