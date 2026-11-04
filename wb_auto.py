@@ -11,6 +11,7 @@
 凭证来自 GitHub Secret（由本机 refresh_token.py 注入），只读环境变量，不落盘、不打日志。
 """
 
+import gzip
 import json
 import os
 import ssl
@@ -18,6 +19,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zlib
 
 DEFAULT_ENDPOINT = "https://copilot.tencent.com"
 REQUEST_TIMEOUT = 20
@@ -31,11 +33,13 @@ def log(msg):
 
 
 def masked(text):
-    """把返回体里的 token 类字段脱敏后再落日志。"""
+    """把返回体里的 token 类字段脱敏后再落日志。error 字段保留原样便于排查。"""
     if isinstance(text, dict):
         out = {}
         for k, v in text.items():
-            if isinstance(v, (dict, list)):
+            if k in ("error", "msg", "reason") or k.endswith("_error"):
+                out[k] = v  # 诊断信息不脱敏、不截断
+            elif isinstance(v, (dict, list)):
                 out[k] = masked(v)
             elif isinstance(v, str) and len(v) > 24:
                 out[k] = v[:6] + "***" + v[-4:]
@@ -77,7 +81,21 @@ def request(url, headers, method="GET", payload=None, retry=True):
         attempt += 1
         try:
             with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT, context=ctx) as resp:
-                raw = resp.read().decode("utf-8", "replace")
+                data = resp.read()
+                # 防御：部分网关会返回 gzip/deflate 压缩体，urllib 不会自动解压，
+                # 直接按 UTF-8 解码会抛 UnicodeDecodeError。这里按 Content-Encoding 解压。
+                ce = resp.headers.get("Content-Encoding", "")
+                if "gzip" in ce:
+                    try:
+                        data = gzip.decompress(data)
+                    except OSError:
+                        pass
+                elif "deflate" in ce:
+                    try:
+                        data = zlib.decompress(data)
+                    except zlib.error:
+                        pass
+                raw = data.decode("utf-8", "replace")
                 try:
                     return resp.status, json.loads(raw)
                 except ValueError:
@@ -360,6 +378,16 @@ def push_feishu(webhook, title, checkin_line, buddy_line, overall_ok):
 # ---------------------------------------------------------------- 主流程
 
 def main():
+    # 强制 UTF-8 输出：GitHub runner 默认 locale 可能是 C/ASCII，
+    # 一旦 print 含中文或替换字符就会抛 UnicodeEncodeError，被外层当成“网络不可达”。
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     token = os.environ.get("WB_ACCESS_TOKEN")
     webhook = os.environ.get("FEISHU_WEBHOOK")
     endpoint = os.environ.get("WB_ENDPOINT") or DEFAULT_ENDPOINT
@@ -372,6 +400,7 @@ def main():
 
     headers = {
         "Accept": "application/json",
+        "Accept-Encoding": "identity",
         "Authorization": "Bearer %s" % token,
         "Content-Type": "application/json",
         "User-Agent": "WorkBuddy",
