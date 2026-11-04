@@ -52,6 +52,9 @@ jobs:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
           WB_ENDPOINT: https://copilot.tencent.com
           WB_RESULT_FILE: ${{ runner.temp }}/wb_result.json
+          # 强制 Python 以 UTF-8 处理标准流，避免 runner（locale 可能为 C）打印中文时抛 UnicodeEncodeError
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
           set -uo pipefail
           PY="${{ steps.py.outputs.python_path }}"
